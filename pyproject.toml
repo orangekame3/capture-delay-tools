@@ -9,7 +9,7 @@ description = "QuEL-1 capture delay sweeps and time-of-flight analysis"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "qubex[backend] @ git+https://github.com/orangekame3/qubex.git@2dfb5575c4a2edd95a879b8cf78feb35e723b6e2",
+    "qubex[backend] @ git+https://github.com/orangekame3/qubex.git@aed7308abd7843d35095c1b87697daa0a2380b48",
     "sqe-analysis",
     "numpy",
     "pandas",

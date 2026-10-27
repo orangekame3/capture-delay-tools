@@ -3,11 +3,15 @@
 from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import Mock
 
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+from qubex.backend.quel1 import Quel1BackendController
+from qubex.system.quel1 import Quel1SystemSynchronizer
+from qubex.system.system_manager import SystemManager
 
 from capture_delay_tools.analysis import Waveform
 from capture_delay_tools.calibration import CaptureDelayCalibrator
@@ -96,6 +100,78 @@ def test_sweep_passes_total_ns_and_records_each_pair():
     fig = calibrator.plot_sweep(show=False)
     assert fig is not None
     assert list(fig["Q00"].to_dict()["data"][0]["x"]) == ["7/0", "7/4", "8/0", "8/4"]
+
+
+@pytest.mark.parametrize("word", [0, 4, 8, 12, 16])
+@pytest.mark.parametrize("fail", [False, True])
+def test_sweep_with_real_qubex_delay_context(monkeypatch, word, fail):
+    """Use Qubex's ns conversion and restore software/controller state on failure."""
+    exp = FakeExperiment()
+    system = exp.system_manager.experiment_system
+    params = system.control_params
+    params.capture_delay = {0: 4, 1: 9}
+    params.capture_delay_word = {0: 4, 1: 8}
+    params.get_capture_delay = lambda mux: params.capture_delay[mux]
+    params.get_capture_delay_word = lambda mux: params.capture_delay_word[mux]
+    channel = SimpleNamespace(number=0, ndelay=4)
+    system.wiring_info = SimpleNamespace(
+        read_in=[
+            (
+                SimpleNamespace(index=0),
+                SimpleNamespace(id="read-in", channels=[channel]),
+            )
+        ]
+    )
+    # Controller state can differ from the software model; both must restore exactly.
+    controller_delays = {("read-in", 0): 6}
+
+    def set_capture_ndelay(*, port_name, channel_number, ndelay):
+        key = (port_name, channel_number)
+        previous = controller_delays[key]
+        controller_delays[key] = ndelay
+        return previous
+
+    controller = Mock(spec=Quel1BackendController)
+    controller.set_capture_ndelay.side_effect = set_capture_ndelay
+    manager = SystemManager.shared()
+    monkeypatch.setattr(manager, "_backend_controller", controller)
+    monkeypatch.setattr(manager, "_experiment_system", system)
+    monkeypatch.setattr(
+        manager,
+        "_system_synchronizer",
+        Quel1SystemSynchronizer(backend_controller=controller),
+    )
+    exp.system_manager = cast(Any, manager)
+    measured = []
+
+    def measure(sequence, **kwargs):
+        coarse, remainder = divmod(7 * 16 + word, 16)
+        assert params.capture_delay == {0: coarse, 1: 9}
+        assert params.capture_delay_word == {0: remainder, 1: 8}
+        assert channel.ndelay == controller_delays[("read-in", 0)] == coarse
+        assert exp.frequencies["R00"] == 9.0
+        measured.append(True)
+        if fail:
+            raise RuntimeError("capture failed")
+        return exp.check_waveform(targets=list(sequence), **kwargs)
+
+    monkeypatch.setattr(exp, "measure", measure)
+    calibrator = CaptureDelayCalibrator(
+        cast(Any, exp), readout_frequencies_ghz={0: 9.0}
+    )
+    if fail:
+        with pytest.raises(RuntimeError, match="capture failed"):
+            calibrator.sweep({0: [7]}, capture_delay_word={0: [word]})
+        assert not calibrator.waveforms
+    else:
+        result = calibrator.sweep({0: [7]}, capture_delay_word={0: [word]})
+        assert result.total_delay_ns.tolist() == [896 + word * 8]
+    assert measured == [True]
+    assert params.capture_delay == {0: 4, 1: 9}
+    assert params.capture_delay_word == {0: 4, 1: 8}
+    assert channel.ndelay == 4
+    assert controller_delays == {("read-in", 0): 6}
+    assert exp.frequencies == {"R00": 8.1, "R01": 8.2}
 
 
 def test_omitted_words_use_the_configured_value():
