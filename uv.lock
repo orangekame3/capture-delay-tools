@@ -131,7 +131,7 @@ requires-dist = [
     { name = "pandas" },
     { name = "plotly", specifier = "<6" },
     { name = "pyyaml", specifier = ">=6" },
-    { name = "qubex", extras = ["backend"], git = "https://github.com/amachino/qubex.git?rev=0bdd13c2e64d1af526bc6b927dd0b2c352d578f5" },
+    { name = "qubex", extras = ["backend"], git = "https://github.com/amachino/qubex.git?rev=develop" },
     { name = "ruamel-yaml", specifier = ">=0.18,<0.19" },
     { name = "sqe-analysis", git = "https://github.com/RIKEN-SQERT/sqe-analysis?rev=e2806e78c6155dfd107a2983d380a20a685c6266" },
     { name = "xarray" },
@@ -1995,7 +1995,7 @@ wheels = [
 [[package]]
 name = "qubex"
 version = "1.5.0rc2"
-source = { git = "https://github.com/amachino/qubex.git?rev=0bdd13c2e64d1af526bc6b927dd0b2c352d578f5#0bdd13c2e64d1af526bc6b927dd0b2c352d578f5" }
+source = { git = "https://github.com/amachino/qubex.git?rev=develop#c20de187dccc32d86316b279ebcf99b68fafbd50" }
 dependencies = [
     { name = "anywidget" },
     { name = "cma" },
@@ -2121,7 +2121,7 @@ runtime-compilation = [
 [[package]]
 name = "qxcore"
 version = "1.5.0rc2"
-source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxcore&rev=0bdd13c2e64d1af526bc6b927dd0b2c352d578f5#0bdd13c2e64d1af526bc6b927dd0b2c352d578f5" }
+source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxcore&rev=develop#c20de187dccc32d86316b279ebcf99b68fafbd50" }
 dependencies = [
     { name = "netcdf4" },
     { name = "numpy" },
@@ -2135,7 +2135,7 @@ dependencies = [
 [[package]]
 name = "qxdriver-quel1"
 version = "1.5.0rc2"
-source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxdriver-quel1&rev=0bdd13c2e64d1af526bc6b927dd0b2c352d578f5#0bdd13c2e64d1af526bc6b927dd0b2c352d578f5" }
+source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxdriver-quel1&rev=develop#c20de187dccc32d86316b279ebcf99b68fafbd50" }
 dependencies = [
     { name = "numpy" },
     { name = "plotly" },
@@ -2147,12 +2147,12 @@ dependencies = [
 [[package]]
 name = "qxfitting"
 version = "1.5.0rc2"
-source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxfitting&rev=0bdd13c2e64d1af526bc6b927dd0b2c352d578f5#0bdd13c2e64d1af526bc6b927dd0b2c352d578f5" }
+source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxfitting&rev=develop#c20de187dccc32d86316b279ebcf99b68fafbd50" }
 
 [[package]]
 name = "qxpulse"
 version = "1.5.0rc2"
-source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxpulse&rev=0bdd13c2e64d1af526bc6b927dd0b2c352d578f5#0bdd13c2e64d1af526bc6b927dd0b2c352d578f5" }
+source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxpulse&rev=develop#c20de187dccc32d86316b279ebcf99b68fafbd50" }
 dependencies = [
     { name = "numpy" },
     { name = "plotly" },
@@ -2164,7 +2164,7 @@ dependencies = [
 [[package]]
 name = "qxschema"
 version = "1.5.0rc2"
-source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxschema&rev=0bdd13c2e64d1af526bc6b927dd0b2c352d578f5#0bdd13c2e64d1af526bc6b927dd0b2c352d578f5" }
+source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxschema&rev=develop#c20de187dccc32d86316b279ebcf99b68fafbd50" }
 dependencies = [
     { name = "numpy" },
     { name = "qxcore" },
@@ -2173,7 +2173,7 @@ dependencies = [
 [[package]]
 name = "qxsimulator"
 version = "1.5.0rc2"
-source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxsimulator&rev=0bdd13c2e64d1af526bc6b927dd0b2c352d578f5#0bdd13c2e64d1af526bc6b927dd0b2c352d578f5" }
+source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxsimulator&rev=develop#c20de187dccc32d86316b279ebcf99b68fafbd50" }
 dependencies = [
     { name = "networkx" },
     { name = "numpy" },
@@ -2190,7 +2190,7 @@ dependencies = [
 [[package]]
 name = "qxvisualizer"
 version = "1.5.0rc2"
-source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxvisualizer&rev=0bdd13c2e64d1af526bc6b927dd0b2c352d578f5#0bdd13c2e64d1af526bc6b927dd0b2c352d578f5" }
+source = { git = "https://github.com/amachino/qubex.git?subdirectory=packages%2Fqxvisualizer&rev=develop#c20de187dccc32d86316b279ebcf99b68fafbd50" }
 dependencies = [
     { name = "numpy" },
     { name = "plotly" },

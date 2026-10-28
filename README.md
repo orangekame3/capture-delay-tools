@@ -9,8 +9,8 @@ sqe-analysis でパルスの位置を解析して、キャプチャ窓の中央�
 uv sync --locked --python 3.13
 ```
 
-Qubex は [PR #387](https://github.com/amachino/qubex/pull/387) を最新upstreamへ統合した
-`0bdd13c2e64d1af526bc6b927dd0b2c352d578f5` に固定しています。
+Qubex は [本家の develop](https://github.com/amachino/qubex/tree/develop) を参照します。
+実際に使用するコミットは `uv.lock` に固定しています。
 QuEL-1 の合計遅延は 32 ns 刻みです。既存の `capture_delay_word` 設定も
 非負整数かつ 4 の倍数である必要があります。QuEL-3 は `capture_delay_word` を使わず、
 `capture_delay` をns値として指定・保存します。校正候補・最終値は両機種とも32 ns刻みです。
