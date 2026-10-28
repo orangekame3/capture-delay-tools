@@ -14,24 +14,38 @@ WORD_STEP = CAPTURE_DELAY_WORD_STEP
 RESOLUTION_NS = CAPTURE_DELAY_RESOLUTION_NS
 
 
-def _centered_delay(rises, falls, starts, stops, center):
+def _centered_delay(
+    rises,
+    falls,
+    starts,
+    stops,
+    center,
+    *,
+    resolution_ns=RESOLUTION_NS,
+    margin_ns=RESOLUTION_NS,
+):
     """Choose the closest feasible 32 ns grid point to the envelope midpoint."""
-    lower = max(0.0, float(np.max(falls - stops + RESOLUTION_NS)))
-    upper = float(np.min(rises - starts - RESOLUTION_NS))
-    lo = np.ceil(lower / RESOLUTION_NS) * RESOLUTION_NS
-    hi = np.floor(upper / RESOLUTION_NS) * RESOLUTION_NS
+    lower = max(0.0, float(np.max(falls - stops + margin_ns)))
+    upper = float(np.min(rises - starts - margin_ns))
+    lo = np.ceil(lower / resolution_ns) * resolution_ns
+    hi = np.floor(upper / resolution_ns) * resolution_ns
     if hi < 0:
         return None, "insufficient_pre_margin"
     if lo > hi:
         return None, "pulse_does_not_fit"
     midpoint = (float(np.min(rises)) + float(np.max(falls))) / 2
-    ideal = np.rint((midpoint - center) / RESOLUTION_NS) * RESOLUTION_NS
+    ideal = np.rint((midpoint - center) / resolution_ns) * resolution_ns
     return float(np.clip(ideal, lo, hi)), "ready"
 
 
 def select_delays(
-    table: pd.DataFrame, *, centers: dict[int, float]
-) -> tuple[dict[int, int], pd.DataFrame]:
+    table: pd.DataFrame,
+    *,
+    centers: dict[int, float],
+    delay_step_ns: float = STEP_NS,
+    resolution_ns: float = RESOLUTION_NS,
+    use_words: bool = True,
+) -> tuple[dict[int, int | float], pd.DataFrame]:
     """Center the pulse envelope using two consistent observations per target."""
     selected, reports = {}, []
     for mux in table["mux"].unique().tolist():
@@ -62,7 +76,7 @@ def select_delays(
                     fall = rise + duration
             if fall <= rise:
                 continue
-            offset = row.delay * STEP_NS + row.capture_delay_word * WORD_NS
+            offset = row.delay * delay_step_ns + row.capture_delay_word * WORD_NS
             estimates.append(
                 dict(
                     target=row.target,
@@ -85,7 +99,8 @@ def select_delays(
             for row in rows:
                 if (
                     not clusters
-                    or row["midpoint"] - clusters[-1][0]["midpoint"] > STEP_NS / 2
+                    or row["midpoint"] - clusters[-1][0]["midpoint"]
+                    > max(STEP_NS, delay_step_ns, resolution_ns) / 2
                 ):
                     clusters.append([])
                 clusters[-1].append(row)
@@ -119,16 +134,25 @@ def select_delays(
         elif len(supported) == len(group.target.unique()):
             bounds = pd.DataFrame(supported)
             total, reason = _centered_delay(
-                bounds.rise, bounds.fall, bounds.start, bounds.stop, centers[mux]
+                bounds.rise,
+                bounds.fall,
+                bounds.start,
+                bounds.stop,
+                centers[mux],
+                resolution_ns=resolution_ns,
+                margin_ns=RESOLUTION_NS,
             )
             report["reason"] = reason
             report["estimated_midpoint_ns"] = (
                 bounds.rise.min() + bounds.fall.max()
             ) / 2
             if total is not None:
-                coarse, word = divmod(
-                    int(round(total / WORD_NS)), int(STEP_NS / WORD_NS)
-                )
+                if use_words:
+                    coarse, word = divmod(
+                        int(round(total / WORD_NS)), int(STEP_NS / WORD_NS)
+                    )
+                else:
+                    coarse, word = round(float(total), 10), 0
                 selected[int(mux)] = coarse
                 report.update(
                     selected_delay=coarse,
@@ -141,10 +165,14 @@ def select_delays(
 
 def finalize_delays(
     table: pd.DataFrame,
-    selected: dict[int, int],
+    selected: dict[int, int | float],
     summary: pd.DataFrame,
     centers: dict[int, float],
-) -> tuple[dict[int, int], dict[int, int], pd.DataFrame]:
+    *,
+    delay_step_ns: float = STEP_NS,
+    resolution_ns: float = RESOLUTION_NS,
+    use_words: bool = True,
+) -> tuple[dict[int, int | float], dict[int, int], pd.DataFrame]:
     """Choose an aligned delay containing every verified pulse with 32 ns margins."""
     values, words, reports = {}, {}, []
     for mux, delay in selected.items():
@@ -171,7 +199,7 @@ def finalize_delays(
         required |= set(group.target)
         if not good.empty and required and required.issubset(set(good.target)):
             arrivals = (
-                delay * STEP_NS + good.capture_delay_word * WORD_NS + good.rise_ns
+                delay * delay_step_ns + good.capture_delay_word * WORD_NS + good.rise_ns
             )
             if "fall_ns" not in good or not np.isfinite(good.fall_ns).all():
                 report["reason"] = "missing_falling_edge"
@@ -186,10 +214,18 @@ def finalize_delays(
                 report["reason"] = "invalid_pulse_bounds"
             else:
                 falls = (
-                    delay * STEP_NS + good.capture_delay_word * WORD_NS + good.fall_ns
+                    delay * delay_step_ns
+                    + good.capture_delay_word * WORD_NS
+                    + good.fall_ns
                 )
                 total_ns, reason = _centered_delay(
-                    arrivals, falls, good.time_start_ns, good.time_stop_ns, centers[mux]
+                    arrivals,
+                    falls,
+                    good.time_start_ns,
+                    good.time_stop_ns,
+                    centers[mux],
+                    resolution_ns=resolution_ns,
+                    margin_ns=RESOLUTION_NS,
                 )
                 if total_ns is None:
                     report["reason"] = reason
@@ -214,9 +250,12 @@ def finalize_delays(
                 elif post_margin < RESOLUTION_NS:
                     report["reason"] = "insufficient_post_margin"
                 else:
-                    coarse, word = divmod(
-                        int(round(total_ns / WORD_NS)), int(STEP_NS / WORD_NS)
-                    )
+                    if use_words:
+                        coarse, word = divmod(
+                            int(round(total_ns / WORD_NS)), int(STEP_NS / WORD_NS)
+                        )
+                    else:
+                        coarse, word = round(float(total_ns), 10), 0
                     values[mux], words[mux] = coarse, word
                     report.update(
                         final_delay=coarse,
