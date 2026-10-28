@@ -221,3 +221,28 @@ def test_missing_source_directory_does_not_create_output(tmp_path):
             tmp_path / "output", source_dir=tmp_path / "missing"
         )
     assert not (tmp_path / "output").exists()
+
+
+def test_quel3_save_params_writes_only_ns_yaml(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "capture_delay.yaml").write_text(
+        "meta: {unit: ns, default: 0}\ndata: {1: 12.8}\n"
+    )
+    calibrator = CaptureDelayCalibrator(
+        cast(
+            Any,
+            SimpleNamespace(
+                system_manager=SimpleNamespace(backend_kind="quel3"),
+                config_loader=SimpleNamespace(params_path=source),
+            ),
+        ),
+        readout_frequencies_ghz={0: 9.0},
+    )
+    calibrator.final_delays = {0: 16.8}
+    paths = calibrator.save_params(tmp_path / "destination")
+    assert paths == {"capture_delay": tmp_path / "destination" / "capture_delay.yaml"}
+    saved = yaml.safe_load(paths["capture_delay"].read_text())
+    assert saved["meta"]["unit"] == "ns"
+    assert saved["data"] == {0: 16.8, 1: 12.8}
+    assert not (tmp_path / "destination" / "capture_delay_word.yaml").exists()

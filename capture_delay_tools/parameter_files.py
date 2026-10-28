@@ -1,5 +1,6 @@
 """Write QuEL-1 capture delay parameters without discarding other mux settings."""
 
+import math
 import os
 import tempfile
 from contextlib import ExitStack
@@ -8,6 +9,7 @@ from numbers import Integral
 from pathlib import Path
 from typing import Any, Mapping
 
+from qubex.backend.quel3.capture_delay import normalize_capture_delay_ns
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
@@ -37,7 +39,7 @@ def _validate_results(delays: Mapping[int, int], words: Mapping[int, int]) -> No
 
 
 def _merged_payload(
-    path: Path, updates: Mapping[int, int], unit: str, codec: YAML
+    path: Path, updates: Mapping[int, int | float], unit: str, codec: YAML
 ) -> dict[str, Any]:
     """Read one structured YAML and update only the requested mux values."""
     if path.is_symlink():
@@ -72,7 +74,7 @@ def _merged_payload(
         if any(isinstance(key, bool) and key == mux for key in data):
             raise ValueError(f"{path}: MUX{mux} has a boolean key.")
         key = str(mux) if str(mux) in data else mux
-        data[key] = int(value)
+        data[key] = int(value) if isinstance(value, Integral) else float(value)
     return payload
 
 
@@ -85,6 +87,54 @@ def _stage_file(directory: Path, content: bytes, cleanup: ExitStack) -> Path:
         cleanup.callback(path.unlink, missing_ok=True)
         stream.write(content)
     return path
+
+
+def save_quel3_capture_delay_params(
+    params_dir: str | Path,
+    *,
+    delays: Mapping[int, int | float],
+    overwrite: bool = False,
+    source_dir: str | Path,
+) -> dict[str, Path]:
+    """Save QuEL-3 capture delays in native nanoseconds."""
+    if not delays:
+        raise ValueError("Run finalize() first; final delays are empty.")
+    for mux, delay in delays.items():
+        if (
+            isinstance(mux, bool)
+            or not isinstance(mux, Integral)
+            or mux < 0
+            or isinstance(delay, bool)
+            or not isinstance(delay, (Integral, float))
+            or not math.isfinite(delay)
+            or delay < 0
+        ):
+            raise ValueError(
+                "QuEL-3 delays require non-negative integer muxes and finite ns values."
+            )
+        normalize_capture_delay_ns(float(delay))
+    directory = Path(params_dir).expanduser()
+    path = directory / "capture_delay.yaml"
+    if not overwrite and (path.exists() or path.is_symlink()):
+        raise FileExistsError(
+            f"{path} already exists; use overwrite=True to update selected muxes."
+        )
+    source = Path(source_dir).expanduser()
+    if not source.is_dir():
+        raise FileNotFoundError(f"Source parameter directory does not exist: {source}")
+    codec = YAML()
+    codec.preserve_quotes = True
+    base = path if path.exists() else source / path.name
+    payload = _merged_payload(base, delays, "ns", codec)
+    stream = StringIO()
+    codec.dump(payload, stream)
+    directory.mkdir(parents=True, exist_ok=True)
+    with ExitStack() as cleanup:
+        staged = _stage_file(directory, stream.getvalue().encode(), cleanup)
+        if path.exists():
+            staged.chmod(path.stat().st_mode & 0o777)
+        os.replace(staged, path)
+    return {"capture_delay": path}
 
 
 def save_capture_delay_params(

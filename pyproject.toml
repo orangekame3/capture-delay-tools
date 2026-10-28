@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "capture-delay-tools"
 version = "0.1.0"
-description = "QuEL-1 capture delay sweeps and time-of-flight analysis"
+description = "QuEL-1 and QuEL-3 capture delay sweeps and time-of-flight analysis"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "qubex[backend] @ git+https://github.com/orangekame3/qubex.git@aed7308abd7843d35095c1b87697daa0a2380b48",
+    "qubex[backend] @ git+https://github.com/amachino/qubex.git@develop",
     "sqe-analysis",
     "numpy",
     "pandas",

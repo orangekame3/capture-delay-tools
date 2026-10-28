@@ -16,9 +16,10 @@ class Waveform:
 
     mux: int
     target: str
-    delay: int
+    delay: int | float
     iq: xr.DataArray
     capture_delay_word: int = 0
+    delay_step_ns: float = BLOCK_DURATION_NS
 
     def __post_init__(self) -> None:
         """Require explicit, finite, increasing and evenly spaced time coordinates."""
@@ -51,14 +52,17 @@ class Waveform:
     def total_delay_ns(self) -> float:
         """Return the combined coarse and word offset in nanoseconds."""
         return (
-            self.delay * BLOCK_DURATION_NS + self.capture_delay_word * WORD_DURATION_NS
+            self.delay * self.delay_step_ns + self.capture_delay_word * WORD_DURATION_NS
         )
 
 
 def analyze_waveforms(
     waveforms: list[Waveform],
     *,
-    windows: dict[str | tuple[str, int] | tuple[str, int, int], tuple[float, float]]
+    windows: dict[
+        str | tuple[str, int | float] | tuple[str, int | float, int],
+        tuple[float, float],
+    ]
     | None = None,
     snr_threshold: float = 5.0,
     smoothing: int = 5,

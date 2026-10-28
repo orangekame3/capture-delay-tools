@@ -14,13 +14,20 @@ import xarray as xr
 from plotly.subplots import make_subplots
 
 from .analysis import Waveform, analyze_waveforms
-from .parameter_files import save_capture_delay_params
-from .selection import STEP_NS, WORD_NS, WORD_STEP, finalize_delays, select_delays
+from .parameter_files import save_capture_delay_params, save_quel3_capture_delay_params
+from .selection import (
+    RESOLUTION_NS,
+    STEP_NS,
+    WORD_NS,
+    WORD_STEP,
+    finalize_delays,
+    select_delays,
+)
 
 
 class CaptureDelayCalibrator:
     """
-    Calibrate QuEL-1 capture delays using fixed readout frequencies.
+    Calibrate QuEL-1 and QuEL-3 capture delays using fixed frequencies.
 
     Parameters
     ----------
@@ -40,7 +47,9 @@ class CaptureDelayCalibrator:
     Notes
     -----
     Each mux emits one tone from its first selected target and captures all
-    selected targets simultaneously. Other transmit amplitudes are zero. Sweep, verification and final checks use the same fixed settings.
+    selected targets simultaneously on QuEL-1. Other transmit amplitudes are zero.
+    QuEL-3 checks one target at a time with readout amplitude 1.0.
+    Sweep, verification and final checks use the same fixed settings.
     Frequency overrides are scoped to each mux sweep and are not exported to YAML.
     """
 
@@ -53,8 +62,12 @@ class CaptureDelayCalibrator:
         snr_threshold: float = 5.0,
         smoothing: int = 5,
     ):
-        if experiment.system_manager.backend_kind != "quel1":
-            raise ValueError("This sample uses QuEL-1 capture-delay units (128 ns).")
+        self.backend_kind = experiment.system_manager.backend_kind
+        if self.backend_kind not in {"quel1", "quel3"}:
+            raise ValueError(f"Unsupported backend: {self.backend_kind!r}.")
+        self._use_words = self.backend_kind == "quel1"
+        self._delay_step_ns = STEP_NS if self._use_words else 1.0
+        self._resolution_ns = RESOLUTION_NS
         for mux, frequency in readout_frequencies_ghz.items():
             if (
                 isinstance(mux, bool)
@@ -88,14 +101,14 @@ class CaptureDelayCalibrator:
 
     def _clear_final_results(self) -> None:
         """Invalidate exported candidates and their final-check waveforms together."""
-        self.final_delays: dict[int, int] = {}
+        self.final_delays: dict[int, int | float] = {}
         self.final_delay_words: dict[int, int] = {}
         self.final_report = pd.DataFrame()
         self.final_waveforms: list[Waveform] = []
 
     def _measure(
         self,
-        sweep: dict[int, list[int]],
+        sweep: dict[int, list[int | float]],
         *,
         capture_delay_word: dict[int, list[int]] | None = None,
     ):
@@ -119,7 +132,11 @@ class CaptureDelayCalibrator:
                     f"MUX{mux}: no selected targets; available muxes: {sorted(available)}."
                 )
             words = (capture_delay_word or {}).get(mux)
-            if words is None:
+            if not self._use_words:
+                if capture_delay_word is not None:
+                    raise ValueError("capture_delay_word is not supported by QuEL-3.")
+                words = [0]
+            elif words is None:
                 words = [system.control_params.get_capture_delay_word(mux)]
             for name, values in [
                 ("capture_delay", delays),
@@ -128,11 +145,15 @@ class CaptureDelayCalibrator:
                 if not values:
                     raise ValueError(f"MUX{mux}: specify at least one {name} value.")
                 if any(
-                    isinstance(d, bool) or not isinstance(d, Integral) or d < 0
+                    isinstance(d, bool)
+                    or not isinstance(d, (Integral, Real))
+                    or not np.isfinite(float(d))
+                    or d < 0
+                    or (name == "capture_delay_word" and not isinstance(d, Integral))
                     for d in values
                 ):
                     raise ValueError(f"{name} values must be nonnegative integers.")
-            if any(word % WORD_STEP for word in words):
+            if self._use_words and any(word % WORD_STEP for word in words):
                 raise ValueError(
                     f"MUX{mux}: capture_delay_word must be a multiple of {WORD_STEP} words (32 ns)."
                 )
@@ -145,7 +166,9 @@ class CaptureDelayCalibrator:
         original = {
             mux: (
                 system.control_params.get_capture_delay(mux),
-                system.control_params.get_capture_delay_word(mux),
+                system.control_params.get_capture_delay_word(mux)
+                if self._use_words
+                else None,
             )
             for mux in sweep
         }
@@ -166,56 +189,80 @@ class CaptureDelayCalibrator:
                 ):
                     for delay, word in product(dict.fromkeys(delays), word_sweep[mux]):
                         with self.exp.system_manager.modified_capture_delay(
-                            {mux: float(int(delay) * STEP_NS + int(word) * WORD_NS)}
+                            {
+                                mux: float(
+                                    delay * self._delay_step_ns + int(word) * WORD_NS
+                                )
+                            }
                         ):
-                            result = self.exp.measure(
-                                sequence,
-                                readout_amplitudes=amplitudes,
-                                readout_duration=duration,
-                                time_integration=False,
-                                add_pump_pulses=False,
-                                n_shots=self.n_shots,
-                                plot=False,
-                            )
-                        for label, measured in result.data.items():
-                            iq = np.asarray(measured.raw, dtype=np.complex128)
-                            if iq.ndim == 2:
-                                iq = np.asarray(iq.mean(axis=0), dtype=np.complex128)
-                            if iq.ndim != 1 or iq.size < 2:
-                                raise ValueError(
-                                    f"{label}: expected averaged IQ with at least two samples."
+                            if self.backend_kind == "quel3":
+                                results = [
+                                    self.exp.check_waveform(
+                                        targets=[target],
+                                        readout_amplitude=1.0,
+                                        readout_duration=duration,
+                                        add_pump_pulses=False,
+                                        n_shots=self.n_shots,
+                                        plot=False,
+                                    )
+                                    for target in targets
+                                ]
+                            else:
+                                result = self.exp.measure(
+                                    sequence,
+                                    readout_amplitudes=amplitudes,
+                                    readout_duration=duration,
+                                    time_integration=False,
+                                    add_pump_pulses=False,
+                                    n_shots=self.n_shots,
+                                    plot=False,
                                 )
-                            traces.append(
-                                Waveform(
-                                    mux,
-                                    label,
-                                    int(delay),
-                                    xr.DataArray(
-                                        iq,
-                                        dims=("time_ns",),
-                                        coords={
-                                            "time_ns": xr.DataArray(
-                                                np.arange(iq.size)
-                                                * measured.sampling_period,
-                                                dims=("time_ns",),
-                                                attrs={"units": "ns"},
-                                            )
-                                        },
-                                        name="iq",
-                                        attrs={
-                                            "dataset_id": f"MUX{mux}/{label}/delay={delay}/word={word}",
-                                            "readout_frequency_ghz": frequency,
-                                            "pulse_duration_ns": duration,
-                                        },
-                                    ),
-                                    capture_delay_word=int(word),
+                                results = [result]
+                        for result in results:
+                            for label, measured in result.data.items():
+                                iq = np.asarray(measured.raw, dtype=np.complex128)
+                                if iq.ndim == 2:
+                                    iq = np.asarray(
+                                        iq.mean(axis=0), dtype=np.complex128
+                                    )
+                                if iq.ndim != 1 or iq.size < 2:
+                                    raise ValueError(
+                                        f"{label}: expected averaged IQ with at least two samples."
+                                    )
+                                traces.append(
+                                    Waveform(
+                                        mux,
+                                        label,
+                                        int(delay) if self._use_words else float(delay),
+                                        xr.DataArray(
+                                            iq,
+                                            dims=("time_ns",),
+                                            coords={
+                                                "time_ns": xr.DataArray(
+                                                    np.arange(iq.size)
+                                                    * measured.sampling_period,
+                                                    dims=("time_ns",),
+                                                    attrs={"units": "ns"},
+                                                )
+                                            },
+                                            name="iq",
+                                            attrs={
+                                                "dataset_id": f"MUX{mux}/{label}/delay={delay}/word={word}",
+                                                "readout_frequency_ghz": frequency,
+                                                "pulse_duration_ns": duration,
+                                            },
+                                        ),
+                                        capture_delay_word=int(word),
+                                        delay_step_ns=self._delay_step_ns,
+                                    )
                                 )
-                            )
         finally:
             current = {
                 mux: (
                     system.control_params.get_capture_delay(mux),
-                    system.control_params.get_capture_delay_word(mux),
+                    system.control_params.get_capture_delay_word(mux)
+                    if self._use_words
+                    else None,
                 )
                 for mux in sweep
             }
@@ -225,7 +272,7 @@ class CaptureDelayCalibrator:
 
     def sweep(
         self,
-        delays: dict[int, Iterable[int]],
+        delays: dict[int, Iterable[int | float]],
         *,
         capture_delay_word: dict[int, Iterable[int]] | None = None,
     ) -> pd.DataFrame:
@@ -295,7 +342,10 @@ class CaptureDelayCalibrator:
     def analyze(
         self,
         *,
-        windows: dict[str | tuple[str, int] | tuple[str, int, int], tuple[float, float]]
+        windows: dict[
+            str | tuple[str, int | float] | tuple[str, int | float, int],
+            tuple[float, float],
+        ]
         | None = None,
     ) -> pd.DataFrame:
         """Analyze recorded traces, optionally restricting per-target time windows."""
@@ -316,7 +366,11 @@ class CaptureDelayCalibrator:
         if self.analysis.empty:
             raise ValueError("Run analyze() first.")
         self.selected_delays, self.selection = select_delays(
-            self.analysis, centers=self.centers
+            self.analysis,
+            centers=self.centers,
+            delay_step_ns=self._delay_step_ns,
+            resolution_ns=self._resolution_ns,
+            use_words=self._use_words,
         )
         return self.selection
 
@@ -331,11 +385,15 @@ class CaptureDelayCalibrator:
             )
         self.verification_waveforms = self._measure(
             {mux: [delay] for mux, delay in self.selected_delays.items()},
-            capture_delay_word={
-                int(row.mux): [int(row.selected_capture_delay_word)]
-                for _, row in self.selection.iterrows()
-                if row.mux in self.selected_delays
-            },
+            capture_delay_word=(
+                {
+                    int(row.mux): [int(row.selected_capture_delay_word)]
+                    for _, row in self.selection.iterrows()
+                    if row.mux in self.selected_delays
+                }
+                if self._use_words
+                else None
+            ),
         )
         # Verification uses the complete capture, independent of sweep-specific crops.
         self.verification = analyze_waveforms(
@@ -350,7 +408,7 @@ class CaptureDelayCalibrator:
             self.verification.midpoint_ns - self.verification.mux.map(self.centers)
         )
         self.verification["within_half_step"] = self.verification.success & (
-            self.verification.error_ns.abs() <= STEP_NS / 2
+            self.verification.error_ns.abs() <= self._resolution_ns / 2
         )
         return pd.DataFrame(
             self.verification[
@@ -375,7 +433,13 @@ class CaptureDelayCalibrator:
         if self.verification.empty:
             raise ValueError("Run verify() first.")
         self.final_delays, self.final_delay_words, self.final_report = finalize_delays(
-            self.verification, self.selected_delays, self.selection, self.centers
+            self.verification,
+            self.selected_delays,
+            self.selection,
+            self.centers,
+            delay_step_ns=self._delay_step_ns,
+            resolution_ns=self._resolution_ns,
+            use_words=self._use_words,
         )
         return self.final_report
 
@@ -424,14 +488,22 @@ class CaptureDelayCalibrator:
         This does not change the active experiment or reload its configuration.
         Inspect `check_final()` waveforms before saving.
         """
+        source = (
+            self.exp.config_loader.params_path if source_dir is None else source_dir
+        )
+        if not self._use_words:
+            return save_quel3_capture_delay_params(
+                params_dir,
+                delays=self.final_delays,
+                overwrite=overwrite,
+                source_dir=source,
+            )
         return save_capture_delay_params(
             params_dir,
-            delays=self.final_delays,
+            delays=cast(dict[int, int], self.final_delays),
             words=self.final_delay_words,
             overwrite=overwrite,
-            source_dir=(
-                self.exp.config_loader.params_path if source_dir is None else source_dir
-            ),
+            source_dir=source,
         )
 
     def check_final(self, *, show: bool = True) -> dict[str, go.Figure] | None:
@@ -444,9 +516,11 @@ class CaptureDelayCalibrator:
             )
         self.final_waveforms = self._measure(
             {mux: [delay] for mux, delay in self.final_delays.items()},
-            capture_delay_word={
-                mux: [word] for mux, word in self.final_delay_words.items()
-            },
+            capture_delay_word=(
+                {mux: [word] for mux, word in self.final_delay_words.items()}
+                if self._use_words
+                else None
+            ),
         )
         return self.plot_final(show=show)
 
@@ -502,7 +576,11 @@ class CaptureDelayCalibrator:
                     ""
                     if heatmap
                     else next(
-                        f" / delay={t.delay}, word={t.capture_delay_word}"
+                        (
+                            f" / delay={t.delay}, word={t.capture_delay_word}"
+                            if self._use_words
+                            else f" / delay={t.delay} ns"
+                        )
                         for t in traces
                         if (t.mux, t.target) == (mux, target)
                     )
@@ -525,12 +603,24 @@ class CaptureDelayCalibrator:
                     )
                 fig.add_trace(
                     go.Heatmap(
-                        x=[f"{t.delay}/{t.capture_delay_word}" for t in group],
+                        x=[
+                            f"{t.delay}/{t.capture_delay_word}"
+                            if self._use_words
+                            else f"{t.delay:g}"
+                            for t in group
+                        ],
                         y=times,
                         z=np.asarray([np.abs(t.iq.values) for t in group]).T,
                         colorscale="Blues",
                         showscale=False,
-                        hovertemplate="delay/word %{x}<br>Time %{y} ns<br>|IQ| %{z:.3g}<extra></extra>",
+                        hovertemplate=(
+                            (
+                                "delay/word %{x}<br>"
+                                if self._use_words
+                                else "delay %{x} ns<br>"
+                            )
+                            + "Time %{y} ns<br>|IQ| %{z:.3g}<extra></extra>"
+                        ),
                     ),
                     row=row,
                     col=1,
@@ -569,6 +659,8 @@ class CaptureDelayCalibrator:
                                     go.Scatter(
                                         x=[
                                             f"{int(edge.delay)}/{int(edge.capture_delay_word)}"
+                                            if self._use_words
+                                            else f"{float(edge.delay):g}"
                                         ],
                                         y=[edge[column]],
                                         mode="markers",
@@ -615,7 +707,11 @@ class CaptureDelayCalibrator:
                         **line_options,
                     )
             fig.update_xaxes(
-                title_text="capture_delay / capture_delay_word (128 ns / 8 ns)"
+                title_text=(
+                    "capture_delay / capture_delay_word (128 ns / 8 ns)"
+                    if self._use_words
+                    else "capture_delay (ns)"
+                )
                 if heatmap
                 else "Time (ns)",
                 type="category" if heatmap else "linear",

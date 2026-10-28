@@ -1,6 +1,6 @@
 # capture-delay-tools
 
-QuEL-1 のキャプチャ遅延を調整するツールです。Qubex で波形を取得し、
+QuEL-1・QuEL-3 のキャプチャ遅延を調整するツールです。Qubex で波形を取得し、
 sqe-analysis でパルスの位置を解析して、キャプチャ窓の中央に収まる遅延を求めます。
 
 ## セットアップ
@@ -9,14 +9,16 @@ sqe-analysis でパルスの位置を解析して、キャプチャ窓の中央�
 uv sync --locked --python 3.13
 ```
 
-Qubex は [PR #387](https://github.com/amachino/qubex/pull/387) の
-`aed7308abd7843d35095c1b87697daa0a2380b48` に固定しています。
+Qubex は [本家の develop](https://github.com/amachino/qubex/tree/develop) を参照します。
+実際に使用するコミットは `uv.lock` に固定しています。
 QuEL-1 の合計遅延は 32 ns 刻みです。既存の `capture_delay_word` 設定も
-非負整数かつ 4 の倍数である必要があります。
+非負整数かつ 4 の倍数である必要があります。QuEL-3 は `capture_delay_word` を使わず、
+`capture_delay` をns値として指定・保存します。校正候補・最終値は両機種とも32 ns刻みです。
 
 ## 使い方
 
-- [日本語ノートブック](capture_delay.ipynb)
+- [QuEL-1 日本語ノートブック](capture_delay.ipynb)
+- [QuEL-3 日本語ノートブック](capture_delay_quel3.ipynb)
 - [English notebook](capture_delay_en.ipynb)
 
 ノートブックの実行環境に `.venv` を選び、リポジトリのルートから実行してください。

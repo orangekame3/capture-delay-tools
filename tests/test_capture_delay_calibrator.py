@@ -641,3 +641,93 @@ def test_plots_return_one_independent_figure_per_qubit(method, monkeypatch):
     assert len(set(displayed)) == 2
     assert all(any(q in filename for filename in displayed) for q in figures)
     assert len(exp.calls) == calls
+
+
+class FakeQuel3Experiment(FakeExperiment):
+    """QuEL-3 fake using native-nanosecond capture delays."""
+
+    def __init__(self):
+        super().__init__()
+        self.system_manager.backend_kind = "quel3"
+        params = self.system_manager.experiment_system.control_params
+        params.get_capture_delay = lambda _: 0.0
+        params.get_capture_delay_word = lambda _: (_ for _ in ()).throw(
+            AssertionError("word access")
+        )
+
+    def check_waveform(self, **kwargs):
+        assert len(kwargs["targets"]) == 1
+        assert kwargs["readout_amplitude"] == 1.0
+        return super().check_waveform(capture_delay=self.delay_override, **kwargs)
+
+
+def test_quel3_acquires_each_qubit_separately():
+    exp = FakeQuel3Experiment()
+    exp.qubit_labels = ["Q00", "Q01"]
+    exp.measure = Mock(side_effect=AssertionError("use check_waveform"))
+    calibrator = CaptureDelayCalibrator(
+        cast(Any, exp), readout_frequencies_ghz={0: 9.0}, n_shots=13
+    )
+    calibrator.sweep({0: [0.0, 0.8]})
+    assert [call["targets"] for call in exp.calls] == [
+        ["Q00"],
+        ["Q01"],
+        ["Q00"],
+        ["Q01"],
+    ]
+    assert [call["capture_delay"] for call in exp.calls] == [
+        {0: 0.0},
+        {0: 0.0},
+        {0: 0.8},
+        {0: 0.8},
+    ]
+    assert all(call["n_shots"] == 13 for call in exp.calls)
+    assert len(calibrator.waveforms) == 4
+    assert exp.delay_override is None
+    assert exp.frequencies == {"R00": 8.1, "R01": 8.2}
+
+
+def test_quel3_sweep_uses_native_ns_and_rejects_words():
+    exp = FakeQuel3Experiment()
+    calibrator = CaptureDelayCalibrator(
+        cast(Any, exp), readout_frequencies_ghz={0: 9.0}
+    )
+    result = calibrator.sweep({0: [0.0, 0.8, 1.6]})
+    assert [call["capture_delay"][0] for call in exp.calls] == [0.0, 0.8, 1.6]
+    assert result.total_delay_ns.tolist() == [0.0, 0.8, 1.6]
+    assert result.capture_delay_word.tolist() == [0, 0, 0]
+    with pytest.raises(ValueError, match="not supported"):
+        calibrator.sweep({0: [0.0]}, capture_delay_word={0: [0]})
+
+
+def test_quel3_rejects_delay_off_sampling_grid():
+    from qubex.system.quel3 import Quel3SystemSynchronizer
+
+    exp = FakeQuel3Experiment()
+    exp.system_manager.modified_capture_delay = (
+        SystemManager.modified_capture_delay.__get__(exp.system_manager, SystemManager)
+    )
+    exp.system_manager._resolve_system_synchronizer = lambda: Quel3SystemSynchronizer(
+        backend_controller=Mock()
+    )
+    params = exp.system_manager.experiment_system.control_params
+    params.capture_delay = {0: 0.0}
+    with pytest.raises(ValueError, match="multiple of 0.8 ns"):
+        CaptureDelayCalibrator(cast(Any, exp), readout_frequencies_ghz={0: 9.0}).sweep(
+            {0: [1.0]}
+        )
+
+
+def test_quel3_selection_uses_same_calibration_grid_as_quel1():
+    exp = FakeQuel3Experiment()
+    calibrator = CaptureDelayCalibrator(
+        cast(Any, exp), readout_frequencies_ghz={0: 9.0}
+    )
+    table = analysis_rows()
+    table["delay"] = 896 + table.capture_delay_word * 8
+    table["capture_delay_word"] = 0
+    calibrator.analysis = table
+    calibrator.centers = {0: 256}
+    calibrator.select()
+    assert calibrator.selected_delays == {0: 992.0}
+    assert calibrator._resolution_ns == 32
